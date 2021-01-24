@@ -6,7 +6,6 @@ from io import BytesIO
 from itertools import groupby
 from random import choice as pick_random
 
-from voxpopuli import Voice
 import discord
 import easygTTS
 import gtts as gTTS
@@ -29,33 +28,36 @@ class Main(commands.Cog):
     async def get_tts(self, message, text, lang, max_length):
         mp3 = await self.bot.cache.get(text, lang, message.id)
         if not mp3:
-            if self.proxy:
-                voice = Voice(lang="en")
-                mp3 = voice.to_audio(text)
-                temp_store_for_mp3 = None
-            else:
+            temp_store_for_mp3 = None
+            if not self.proxy:
                 make_tts_func = make_func(self.make_tts, text, lang)
                 temp_store_for_mp3 = await self.bot.loop.run_in_executor(None, make_tts_func)
 
-                if temp_store_for_mp3 == "Rate limited":
-                    self.proxy = True
-                    self.bot.loop.create_task(self.clear_rate_limit())
-                    await self.bot.channels["logs"].send(f"<@341486397917626381> Rate limit mode engaged, swapped to easygTTS")
-                try:
-                    temp_store_for_mp3.seek(0)
-                    file_length = int(MP3(temp_store_for_mp3).info.length)
-                except HeaderNotFoundError:
-                    return
+            if temp_store_for_mp3 == "Rate limited":
+                self.proxy = True
+                self.bot.loop.create_task(self.clear_rate_limit())
+                await self.bot.channels["logs"].send(f"<@341486397917626381> Rate limit mode engaged, swapped to easygTTS")
 
-                # Discard if over max length seconds
-                if file_length > int(max_length):
-                    return
+            if self.proxy:
+                if not getattr(self, "gtts", False):
+                    self.gtts = easygTTS.gtts(session=self.bot.session)
 
+                temp_store_for_mp3 = BytesIO(await self.gtts.get(text=text, lang=lang))
+
+            try:
                 temp_store_for_mp3.seek(0)
-                mp3 = temp_store_for_mp3.read()
+                file_length = int(MP3(temp_store_for_mp3).info.length)
+            except HeaderNotFoundError:
+                return
 
-                await self.bot.cache.set(text, lang, message.id, mp3)
+            # Discard if over max length seconds
+            if file_length > int(max_length):
+                return
 
+            temp_store_for_mp3.seek(0)
+            mp3 = temp_store_for_mp3.read()
+
+            await self.bot.cache.set(text, lang, message.id, mp3)
 
         self.bot.queue[message.guild.id][message.id] = mp3
 
